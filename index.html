@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Neon Idle Pinball MVP</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="game-shell">
+      <section class="hero-panel" aria-label="遊戲狀態">
+        <div class="brand-block">
+          <p class="eyebrow">BLACK GOLD ARCADE</p>
+          <h1>Neon Idle Pinball</h1>
+        </div>
+
+        <div class="stats-grid">
+          <article class="stat-card">
+            <span class="stat-label">Energy</span>
+            <strong id="energyValue">0</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">基礎收益</span>
+            <strong id="baseRewardValue">10</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">落球間隔</span>
+            <strong id="dropIntervalValue">8.0 秒</strong>
+          </article>
+          <article class="stat-card">
+            <span class="stat-label">下一顆球</span>
+            <strong id="nextDropValue">準備中</strong>
+          </article>
+        </div>
+      </section>
+
+      <section class="board-wrap" aria-label="彈珠台">
+        <canvas
+          id="pinballCanvas"
+          width="480"
+          height="680"
+          aria-label="霓虹黑金放置型彈珠台"
+        ></canvas>
+        <div id="offlineNotice" class="notice" hidden></div>
+      </section>
+
+      <section class="upgrade-panel" aria-label="升級">
+        <div class="panel-title">
+          <p class="eyebrow">UPGRADES</p>
+          <h2>升級系統</h2>
+        </div>
+        <div id="upgradeList" class="upgrade-list"></div>
+      </section>
+    </main>
+
+    <script src="game.js"></script>
+  </body>
+</html>
