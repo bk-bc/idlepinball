@@ -80,6 +80,30 @@ body::before {
   border-left: 2px solid var(--gold);
 }
 
+.sound-toggle {
+  margin-top: 14px;
+  min-height: 36px;
+  padding: 7px 12px;
+  border: 1px solid rgba(88, 246, 255, 0.38);
+  border-radius: 8px;
+  color: #dffcff;
+  background: rgba(88, 246, 255, 0.08);
+  box-shadow: 0 0 14px rgba(88, 246, 255, 0.12);
+  font: inherit;
+  font-size: 0.86rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.sound-toggle:hover {
+  border-color: rgba(88, 246, 255, 0.68);
+  filter: brightness(1.08);
+}
+
+.sound-toggle:active {
+  filter: brightness(0.92);
+}
+
 .eyebrow {
   margin: 0 0 6px;
   color: var(--gold);
@@ -195,6 +219,12 @@ h2 {
   border: 1px solid rgba(255, 216, 107, 0.2);
   border-radius: 8px;
   background: var(--panel);
+  transition: border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.upgrade-card.is-flashing {
+  border-color: rgba(88, 246, 255, 0.72);
+  box-shadow: 0 0 22px rgba(88, 246, 255, 0.18);
 }
 
 .upgrade-card h3 {
@@ -239,14 +269,17 @@ h2 {
   font: inherit;
   font-weight: 850;
   cursor: pointer;
+  transition: border-color 120ms ease, box-shadow 120ms ease, filter 120ms ease;
 }
 
 .upgrade-card button:hover:not(:disabled) {
+  border-color: rgba(255, 236, 166, 0.78);
+  box-shadow: 0 0 22px rgba(255, 216, 107, 0.24);
   filter: brightness(1.08);
 }
 
 .upgrade-card button:active:not(:disabled) {
-  transform: translateY(1px);
+  filter: brightness(0.94);
 }
 
 .upgrade-card button:disabled {

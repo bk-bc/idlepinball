@@ -10,11 +10,21 @@ const ui = {
   nextDrop: document.getElementById("nextDropValue"),
   upgradeList: document.getElementById("upgradeList"),
   offlineNotice: document.getElementById("offlineNotice"),
+  soundToggle: document.getElementById("soundToggle"),
 };
 
 const slotMultipliers = [1, 2, 3, 2, 1];
 const averageSlotMultiplier =
   slotMultipliers.reduce((sum, value) => sum + value, 0) / slotMultipliers.length;
+
+const UPGRADE_CLICK_COOLDOWN_MS = 150;
+const UPGRADE_FLASH_MS = 360;
+const PEG_FLASH_SECONDS = 0.16;
+const BALL_TIMEOUT_SECONDS = 20;
+const VELOCITY_UNIT = 60;
+const MAX_VELOCITY_X = 8 * VELOCITY_UNIT;
+const MAX_VELOCITY_Y = 12 * VELOCITY_UNIT;
+const COLLISION_DAMPING = 0.965;
 
 const upgrades = [
   {
@@ -67,6 +77,14 @@ const state = {
   dpr: 1,
   saveTimer: 0,
   lastScoreText: "",
+  upgradeCooldownUntil: {},
+  upgradeFlashUntil: {},
+};
+
+const audio = {
+  enabled: false,
+  context: null,
+  lastPegSoundAt: 0,
 };
 
 function loadSave() {
@@ -137,6 +155,101 @@ function showNotice(message) {
   }, 5200);
 }
 
+function setupAudioToggle() {
+  if (!ui.soundToggle) {
+    return;
+  }
+
+  ui.soundToggle.addEventListener("click", () => {
+    audio.enabled = !audio.enabled;
+    if (audio.enabled) {
+      const context = getAudioContext();
+      if (context && context.state === "suspended") {
+        context.resume().catch(() => {});
+      }
+    }
+    updateSoundToggle();
+  });
+
+  updateSoundToggle();
+}
+
+function updateSoundToggle() {
+  if (!ui.soundToggle) {
+    return;
+  }
+
+  ui.soundToggle.textContent = audio.enabled ? "音效：開" : "音效：關";
+  ui.soundToggle.setAttribute("aria-pressed", String(audio.enabled));
+}
+
+function getAudioContext() {
+  if (audio.context) {
+    return audio.context;
+  }
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) {
+    return null;
+  }
+
+  try {
+    audio.context = new AudioContextClass();
+  } catch (error) {
+    audio.enabled = false;
+    updateSoundToggle();
+    return null;
+  }
+
+  return audio.context;
+}
+
+function playTone(frequency, duration, type = "sine", volume = 0.035) {
+  if (!audio.enabled) {
+    return;
+  }
+
+  const context = getAudioContext();
+  if (!context) {
+    return;
+  }
+
+  try {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
+    const now = context.currentTime;
+
+    oscillator.type = type;
+    oscillator.frequency.setValueAtTime(frequency, now);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(volume, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+    oscillator.start(now);
+    oscillator.stop(now + duration + 0.02);
+  } catch (error) {
+    audio.enabled = false;
+    updateSoundToggle();
+  }
+}
+
+function playPegSound(impact) {
+  const now = performance.now();
+  if (now - audio.lastPegSoundAt < 55) {
+    return;
+  }
+
+  audio.lastPegSoundAt = now;
+  const frequency = 320 + Math.min(impact, 360) * 0.45;
+  playTone(frequency, 0.045, "triangle", 0.024);
+}
+
+function playScoreSound(multiplier) {
+  playTone(420 + multiplier * 115, 0.12, "sine", 0.04);
+}
+
 function getBaseReward() {
   return 10 + state.levels.energyValue * 5;
 }
@@ -146,7 +259,7 @@ function getDropInterval() {
 }
 
 function getBounceRestitution() {
-  return Math.min(0.98, 0.64 + state.levels.bouncePower * 0.035);
+  return Math.min(0.72, 0.6 + state.levels.bouncePower * 0.01);
 }
 
 function getScoreMultiplier() {
@@ -181,13 +294,26 @@ function canBuy(upgrade) {
 
 function buyUpgrade(id) {
   const upgrade = upgrades.find((item) => item.id === id);
-  if (!upgrade || !canBuy(upgrade)) {
+  if (!upgrade) {
+    return;
+  }
+
+  const now = Date.now();
+  if ((state.upgradeCooldownUntil[id] || 0) > now) {
+    return;
+  }
+
+  state.upgradeCooldownUntil[id] = now + UPGRADE_CLICK_COOLDOWN_MS;
+
+  if (!canBuy(upgrade)) {
+    updateUI();
     return;
   }
 
   const cost = getUpgradeCost(upgrade);
   state.energy -= cost;
   state.levels[id] += 1;
+  state.upgradeFlashUntil[id] = now + UPGRADE_FLASH_MS;
   persist();
   updateUI();
 }
@@ -226,11 +352,19 @@ function createUpgradeButtons() {
 }
 
 function updateUpgradeButtons() {
+  const now = Date.now();
+
   for (const card of ui.upgradeList.querySelectorAll(".upgrade-card")) {
     const button = card.querySelector("button");
     const upgrade = upgrades.find((item) => item.id === button.dataset.upgradeId);
     const level = state.levels[upgrade.id] || 0;
     const isMaxed = Boolean(upgrade.maxLevel && level >= upgrade.maxLevel);
+    const isCooling = (state.upgradeCooldownUntil[upgrade.id] || 0) > now;
+
+    card.classList.toggle(
+      "is-flashing",
+      (state.upgradeFlashUntil[upgrade.id] || 0) > now
+    );
 
     card.querySelector('[data-role="level"]').textContent = upgrade.maxLevel
       ? `Lv ${level}/${upgrade.maxLevel}`
@@ -244,7 +378,7 @@ function updateUpgradeButtons() {
     } else {
       const cost = getUpgradeCost(upgrade);
       button.textContent = `升級：${formatNumber(cost)} Energy`;
-      button.disabled = state.energy < cost;
+      button.disabled = isCooling || state.energy < cost;
     }
   }
 }
@@ -309,6 +443,7 @@ function buildPegs() {
         x: startX + col * step,
         y,
         r: radius,
+        flash: 0,
       });
     }
   }
@@ -324,6 +459,7 @@ function spawnBall() {
     vx: (Math.random() - 0.5) * 80,
     vy: 20,
     r: radius,
+    age: 0,
     trail: [],
   };
 }
@@ -340,6 +476,7 @@ function update(dt) {
     updateBall(state.ball, safeDt);
   }
 
+  updatePegs(safeDt);
   updateEffects(safeDt);
 
   state.saveTimer += safeDt;
@@ -351,7 +488,9 @@ function update(dt) {
 
 function updateBall(ball, dt) {
   const gravity = 780;
+  ball.age += dt;
   ball.vy += gravity * dt;
+  clampBallVelocity(ball);
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
@@ -369,6 +508,11 @@ function updateBall(ball, dt) {
   const catchLine = getSlotTop() + Math.max(18, state.height * 0.035);
   if (ball.y + ball.r >= catchLine) {
     scoreBall(ball);
+    return;
+  }
+
+  if (ball.age >= BALL_TIMEOUT_SECONDS) {
+    scoreBall(ball, getLowestSlotIndex());
   }
 }
 
@@ -376,17 +520,26 @@ function handleWallCollision(ball) {
   const restitution = 0.72;
   const left = 18 + ball.r;
   const right = state.width - 18 - ball.r;
+  let collided = false;
+
   if (ball.x < left) {
     ball.x = left;
     ball.vx = Math.abs(ball.vx) * restitution;
+    collided = true;
   } else if (ball.x > right) {
     ball.x = right;
     ball.vx = -Math.abs(ball.vx) * restitution;
+    collided = true;
   }
 
   if (ball.y < ball.r) {
     ball.y = ball.r;
     ball.vy = Math.abs(ball.vy) * restitution;
+    collided = true;
+  }
+
+  if (collided) {
+    applyCollisionDamping(ball);
   }
 }
 
@@ -415,37 +568,75 @@ function resolveCircleCollision(ball, peg) {
     ball.vx += impulse * nx;
     ball.vy += impulse * ny;
 
-    const kick = 18 + state.levels.bouncePower * 3;
-    ball.vx += nx * kick + (Math.random() - 0.5) * 18;
-    ball.vy -= Math.abs(ny) * kick * 0.25;
+    const kick = 7 + state.levels.bouncePower * 0.75;
+    ball.vx += nx * kick + (Math.random() - 0.5) * 6;
+    ball.vy += ny * kick * 0.18;
+    peg.flash = PEG_FLASH_SECONDS;
+    playPegSound(Math.abs(velocityAlongNormal));
+    applyCollisionDamping(ball);
   }
+}
+
+function clampBallVelocity(ball) {
+  ball.vx = clamp(ball.vx, -MAX_VELOCITY_X, MAX_VELOCITY_X);
+  ball.vy = clamp(ball.vy, -MAX_VELOCITY_Y, MAX_VELOCITY_Y);
+}
+
+function applyCollisionDamping(ball) {
+  ball.vx *= COLLISION_DAMPING;
+  ball.vy *= COLLISION_DAMPING;
+  clampBallVelocity(ball);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 function getSlotTop() {
   return state.height - Math.max(82, state.height * 0.14);
 }
 
-function scoreBall(ball) {
+function getLowestSlotIndex() {
+  let lowestIndex = 0;
+  for (let index = 1; index < slotMultipliers.length; index += 1) {
+    if (slotMultipliers[index] < slotMultipliers[lowestIndex]) {
+      lowestIndex = index;
+    }
+  }
+  return lowestIndex;
+}
+
+function scoreBall(ball, forcedSlotIndex = null) {
   const slotWidth = state.width / slotMultipliers.length;
-  const slotIndex = Math.max(
-    0,
-    Math.min(slotMultipliers.length - 1, Math.floor(ball.x / slotWidth))
-  );
+  const slotIndex =
+    forcedSlotIndex === null
+      ? Math.max(
+          0,
+          Math.min(slotMultipliers.length - 1, Math.floor(ball.x / slotWidth))
+        )
+      : Math.max(0, Math.min(slotMultipliers.length - 1, forcedSlotIndex));
   const slotMultiplier = slotMultipliers[slotIndex];
   const reward = Math.floor(getBaseReward() * slotMultiplier * getScoreMultiplier());
 
   state.energy += reward;
-  state.lastScoreText = `+${formatNumber(reward)} Energy · x${slotMultiplier}`;
+  state.lastScoreText = `+${formatNumber(reward)} Energy`;
   state.effects.push({
     text: state.lastScoreText,
     x: slotWidth * slotIndex + slotWidth / 2,
     y: getSlotTop() - 12,
     age: 0,
   });
+  playScoreSound(slotMultiplier);
   state.ball = null;
   state.spawnTimer = getDropInterval();
   persist();
   updateUI();
+}
+
+function updatePegs(dt) {
+  for (const peg of state.pegs) {
+    peg.flash = Math.max(0, peg.flash - dt);
+  }
 }
 
 function updateEffects(dt) {
@@ -517,16 +708,24 @@ function drawBoardFrame(width, height) {
 
 function drawPegs() {
   for (const peg of state.pegs) {
-    const glow = ctx.createRadialGradient(peg.x, peg.y, 1, peg.x, peg.y, peg.r * 3.2);
-    glow.addColorStop(0, "rgba(255, 226, 135, 0.78)");
+    const flash = Math.max(0, Math.min(1, peg.flash / PEG_FLASH_SECONDS));
+    const glowRadius = peg.r * (3.2 + flash * 2);
+    const glow = ctx.createRadialGradient(peg.x, peg.y, 1, peg.x, peg.y, glowRadius);
+    glow.addColorStop(
+      0,
+      flash > 0
+        ? "rgba(88, 246, 255, 0.85)"
+        : "rgba(255, 226, 135, 0.78)"
+    );
     glow.addColorStop(1, "rgba(255, 216, 107, 0)");
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(peg.x, peg.y, peg.r * 3.2, 0, Math.PI * 2);
+    ctx.arc(peg.x, peg.y, glowRadius, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = "#f6cf68";
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.58)";
+    ctx.fillStyle = flash > 0 ? "#e9ffff" : "#f6cf68";
+    ctx.strokeStyle =
+      flash > 0 ? "rgba(88, 246, 255, 0.88)" : "rgba(255, 255, 255, 0.58)";
     ctx.lineWidth = 1.2;
     ctx.beginPath();
     ctx.arc(peg.x, peg.y, peg.r, 0, Math.PI * 2);
@@ -694,6 +893,7 @@ document.addEventListener("visibilitychange", () => {
   }
 });
 
+setupAudioToggle();
 loadSave();
 createUpgradeButtons();
 resizeCanvas();
